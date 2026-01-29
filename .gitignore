@@ -1,0 +1,57 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Uploads and processed files
+backend_new/uploads/
+backend_new/processed/
+
+# YOLO models (downloaded automatically)
+*.pt
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build
+dist/
+build/
+
+# Frontend
+frontend/.vite/
+frontend/dist/
+
+# Old backend (keeping for reference but not tracking)
+backend/.venv/
+backend/__pycache__/
+backend/naturalanomaly/__pycache__/
+backend/*.db

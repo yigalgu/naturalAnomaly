@@ -1,0 +1,131 @@
+from ultralytics import YOLO
+import cv2
+from pathlib import Path
+from typing import List, Dict
+import json
+
+class VideoProcessor:
+    """Process videos to detect and track vehicles"""
+    
+    def __init__(self, model_name: str = "yolov8n.pt"):
+        """Initialize YOLO model"""
+        self.model = YOLO(model_name)
+        # Vehicle classes in COCO dataset
+        self.vehicle_classes = {
+            2: "car",
+            3: "motorcycle", 
+            5: "bus",
+            7: "truck"
+        }
+    
+    def process_video(self, video_path: Path) -> Dict:
+        """
+        Process video and detect vehicles
+        Returns statistics about detected vehicles
+        """
+        cap = cv2.VideoCapture(str(video_path))
+        
+        if not cap.isOpened():
+            raise ValueError(f"Cannot open video: {video_path}")
+        
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        duration = total_frames / fps if fps > 0 else 0
+        
+        detections = []
+        frame_count = 0
+        
+        print(f"Processing video: {video_path.name}")
+        print(f"Total frames: {total_frames}, FPS: {fps}, Duration: {duration:.2f}s")
+        
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
+            
+            # Run YOLO detection every 10 frames (for speed)
+            if frame_count % 10 == 0:
+                results = self.model(frame, verbose=False)
+                
+                for result in results:
+                    boxes = result.boxes
+                    for box in boxes:
+                        cls = int(box.cls[0])
+                        conf = float(box.conf[0])
+                        
+                        # Only track vehicles with confidence > 0.5
+                        if cls in self.vehicle_classes and conf > 0.5:
+                            detections.append({
+                                "frame": frame_count,
+                                "timestamp": frame_count / fps,
+                                "class_id": cls,
+                                "class_name": self.vehicle_classes[cls],
+                                "confidence": conf,
+                                "bbox": box.xyxy[0].tolist()
+                            })
+            
+            frame_count += 1
+            
+            # Progress indicator
+            if frame_count % 100 == 0:
+                progress = (frame_count / total_frames) * 100
+                print(f"Progress: {progress:.1f}%")
+        
+        cap.release()
+        
+        # Calculate statistics
+        stats = self._calculate_statistics(detections, duration)
+        
+        return {
+            "video_info": {
+                "filename": video_path.name,
+                "duration": duration,
+                "fps": fps,
+                "total_frames": total_frames
+            },
+            "detections": detections,
+            "statistics": stats
+        }
+    
+    def _calculate_statistics(self, detections: List[Dict], duration: float) -> Dict:
+        """Calculate statistics from detections"""
+        if not detections:
+            return {
+                "total_vehicles": 0,
+                "vehicles_per_hour": 0,
+                "vehicle_types": {}
+            }
+        
+        # Count unique vehicles (simplified - count detections / 10)
+        # In a real system, you'd use tracking to count unique vehicles
+        estimated_vehicles = len(detections) // 10
+        
+        # Vehicles per hour
+        hours = duration / 3600 if duration > 0 else 1
+        vehicles_per_hour = estimated_vehicles / hours
+        
+        # Count by type
+        vehicle_types = {}
+        for det in detections:
+            vtype = det["class_name"]
+            vehicle_types[vtype] = vehicle_types.get(vtype, 0) + 1
+        
+        # Find busiest segment (divide video into 10 segments)
+        segments = [0] * 10
+        for det in detections:
+            segment_idx = min(int((det["timestamp"] / duration) * 10), 9) if duration > 0 else 0
+            segments[segment_idx] += 1
+        
+        busiest_segment = segments.index(max(segments))
+        
+        return {
+            "total_vehicles": estimated_vehicles,
+            "vehicles_per_hour": round(vehicles_per_hour, 2),
+            "vehicle_types": vehicle_types,
+            "busiest_segment": {
+                "segment_number": busiest_segment,
+                "start_time": (busiest_segment * duration / 10) if duration > 0 else 0,
+                "end_time": ((busiest_segment + 1) * duration / 10) if duration > 0 else 0,
+                "vehicle_count": segments[busiest_segment]
+            }
+        }
