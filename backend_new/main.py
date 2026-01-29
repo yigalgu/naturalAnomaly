@@ -115,32 +115,35 @@ async def list_videos():
 
 @app.post("/api/chat/")
 async def chat(request: ChatRequest):
-    """Chat about video analysis"""
+    """Chat about video analysis using AI"""
     try:
         # Get video analysis if filename provided
-        context = ""
+        context = {}
         if request.video_filename:
             analysis = db.get_analysis(request.video_filename)
             if analysis:
-                context = f"""
-Video Analysis Data:
-- Total vehicles detected: {analysis.total_vehicles}
-- Vehicles per hour: {analysis.vehicles_per_hour}
-- Vehicle types: {analysis.vehicle_types}
-- Busiest segment: Segment {analysis.busiest_segment['segment_number']} 
-  (from {analysis.busiest_segment['start_time']:.1f}s to {analysis.busiest_segment['end_time']:.1f}s)
-  with {analysis.busiest_segment['vehicle_count']} detections
-- Video duration: {analysis.duration:.1f} seconds
-"""
+                context = {
+                    "total_vehicles": analysis.total_vehicles,
+                    "vehicles_per_hour": analysis.vehicles_per_hour,
+                    "vehicle_types": analysis.vehicle_types,
+                    "busiest_segment": analysis.busiest_segment,
+                    "duration": analysis.duration
+                }
         
-        # For now, return a simple response
-        # In next phase, we'll integrate Ollama here
+        # Use AI assistant to generate response
+        from ai_assistant import AIAssistant
+        ai = AIAssistant()
+        response = ai.ask(request.message, context, request.video_filename)
+        
         return JSONResponse(content={
-            "response": f"Analysis context: {context}\n\nUser question: {request.message}\n\n(Ollama integration coming in next phase)"
+            "response": response
         })
     
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error in chat: {str(e)}")
+        # Fallback to basic response if AI fails
+        return JSONResponse(content={
+            "response": f"מצטער, אירעה שגיאה: {str(e)}\n\nאנא וודא ש-Ollama מותקן ורץ (ollama serve)"
+        })
 
 @app.get("/api/health/")
 async def health_check():
