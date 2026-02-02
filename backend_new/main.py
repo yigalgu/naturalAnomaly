@@ -26,9 +26,13 @@ PROCESSED_DIR = Path("processed")
 UPLOAD_DIR.mkdir(exist_ok=True)
 PROCESSED_DIR.mkdir(exist_ok=True)
 
-# Initialize video processor and database
+# Initialize video processor, database, and AI assistant
 video_processor = VideoProcessor()
 db = Database()
+
+# Import and initialize AI assistant
+from ai_assistant import AIAssistant
+ai_assistant = AIAssistant()
 
 class ChatRequest(BaseModel):
     message: str
@@ -122,18 +126,26 @@ async def chat(request: ChatRequest):
         if request.video_filename:
             analysis = db.get_analysis(request.video_filename)
             if analysis:
+                # Parse JSON fields if they're strings
+                import json
+                vehicle_types = analysis.vehicle_types
+                if isinstance(vehicle_types, str):
+                    vehicle_types = json.loads(vehicle_types)
+                
+                busiest_segment = analysis.busiest_segment
+                if isinstance(busiest_segment, str):
+                    busiest_segment = json.loads(busiest_segment)
+                
                 context = {
                     "total_vehicles": analysis.total_vehicles,
                     "vehicles_per_hour": analysis.vehicles_per_hour,
-                    "vehicle_types": analysis.vehicle_types,
-                    "busiest_segment": analysis.busiest_segment,
+                    "vehicle_types": vehicle_types,
+                    "busiest_segment": busiest_segment,
                     "duration": analysis.duration
                 }
         
         # Use AI assistant to generate response
-        from ai_assistant import AIAssistant
-        ai = AIAssistant()
-        response = ai.ask(request.message, context, request.video_filename)
+        response = ai_assistant.ask(request.message, context, request.video_filename)
         
         return JSONResponse(content={
             "response": response
@@ -144,6 +156,15 @@ async def chat(request: ChatRequest):
         return JSONResponse(content={
             "response": f"מצטער, אירעה שגיאה: {str(e)}\n\nאנא וודא ש-Ollama מותקן ורץ (ollama serve)"
         })
+
+@app.post("/api/reset-chat/")
+async def reset_chat():
+    """Reset the chat conversation history"""
+    try:
+        ai_assistant.reset_conversation()
+        return JSONResponse(content={"message": "Conversation reset successfully"})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error resetting chat: {str(e)}")
 
 @app.get("/api/health/")
 async def health_check():
