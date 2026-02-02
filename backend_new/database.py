@@ -23,6 +23,19 @@ class VideoAnalysis(Base):
     detections = Column(JSON)  # Store all detections as JSON
     processed = Column(Integer, default=0)  # 0 = pending, 1 = processing, 2 = done
 
+class AnomalyRecord(Base):
+    """Store detected anomalies"""
+    __tablename__ = "anomalies"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    video_filename = Column(String, index=True)
+    timestamp = Column(Float)
+    anomaly_type = Column(String)      # "stopped", "speeding", "spike"
+    severity = Column(String)          # "low", "medium", "high"
+    description = Column(String)
+    track_id = Column(Integer, nullable=True)
+    anomaly_metadata = Column(JSON)    # Additional details (renamed from 'metadata' which is reserved)
+
 class Database:
     """Database manager"""
     
@@ -78,5 +91,46 @@ class Database:
         session = self.get_session()
         try:
             return session.query(VideoAnalysis).all()
+        finally:
+            session.close()
+    
+    def save_anomalies(self, filename: str, anomalies: list):
+        """Save detected anomalies to database"""
+        session = self.get_session()
+        try:
+            # First, delete any existing anomalies for this video
+            session.query(AnomalyRecord).filter(AnomalyRecord.video_filename == filename).delete()
+            
+            # Add new anomalies
+            for anomaly_data in anomalies:
+                anomaly = AnomalyRecord(
+                    video_filename=filename,
+                    timestamp=anomaly_data.get("timestamp"),
+                    anomaly_type=anomaly_data.get("anomaly_type"),
+                    severity=anomaly_data.get("severity"),
+                    description=anomaly_data.get("description"),
+                    track_id=anomaly_data.get("track_id"),
+                    anomaly_metadata=anomaly_data.get("metadata", {})
+                )
+                session.add(anomaly)
+            
+            session.commit()
+        finally:
+            session.close()
+    
+    def get_anomalies(self, filename: str):
+        """Get all anomalies for a specific video"""
+        session = self.get_session()
+        try:
+            return session.query(AnomalyRecord).filter(AnomalyRecord.video_filename == filename).all()
+        finally:
+            session.close()
+    
+    def delete_anomalies(self, filename: str):
+        """Delete all anomalies for a specific video"""
+        session = self.get_session()
+        try:
+            session.query(AnomalyRecord).filter(AnomalyRecord.video_filename == filename).delete()
+            session.commit()
         finally:
             session.close()

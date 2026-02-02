@@ -38,7 +38,7 @@ class AIAssistant:
 - Use numbers and specifics from the data
 - Avoid technical jargon - say "vehicles" not "detected objects"
 - NO phrases like "based on the analysis" or "the data shows" - just answer naturally
-- Use emojis sparingly (🚗 🚌 🏍️ 🚛) only when it adds clarity
+- Use emojis sparingly (🚗 🚌 🏍️ 🚛 ⚠️) only when it adds clarity
 
 🌍 LANGUAGE:
 - Respond in the SAME language as the question
@@ -46,11 +46,13 @@ class AIAssistant:
 - English: natural, conversational English
 
 ⚠️ ANOMALIES:
-- If asked about unusual things, look for:
-  * Vehicles stopping in odd places
-  * Unusually high/low traffic
-  * Sudden changes in traffic patterns
-  * Anything that stands out from the norm
+- The system automatically detects anomalies in the video
+- If anomalies are listed in the context, mention them when asked about unusual things
+- Types of anomalies detected:
+  * 🚗 Stopped vehicles: vehicles that stopped for unusually long time
+  * 🏃 High speed: vehicles moving very fast
+  * 📊 Traffic spikes: sudden increases in traffic volume
+- Present anomalies in a friendly, informative way
 
 💬 EXAMPLES OF GOOD RESPONSES:
 
@@ -61,7 +63,10 @@ User: "מה קורה בסרטון?"
 Bot: "זה צומת עירוני עם תנועה בינונית. זיהיתי 45 כלי רכב ב-90 שניות - בעיקר מכוניות עם כמה משאיות."
 
 User: "Any anomalies?"
-Bot: "Yeah, there's one thing - at second 47, a white car stops in the middle of the lane for about 8 seconds. Everything else looks normal."
+Bot: "Yeah, found 2 anomalies: a vehicle stopped for 8 seconds at 47s (medium severity), and high speed detected at 1:23 (low severity)."
+
+User: "יש משהו חריג?"
+Bot: "כן, מצאתי 2 אנומליות: רכב עצר ל-8 שניות ב-47 שניות (חומרה בינונית), ומהירות גבוהה זוהתה ב-1:23 (חומרה נמוכה)."
 
 User: "כמה משאיות?"
 Bot: "7 משאיות, בערך 15% מהתנועה."
@@ -156,7 +161,19 @@ Remember: Be helpful, natural, and conversational. You're having a chat, not wri
             count = seg.get('vehicle_count', 0)
             parts.append(f"Busiest period: {start:.1f}s-{end:.1f}s ({count} detections)")
         
+        # Add anomalies information
+        if "anomalies" in context and context["anomalies"]:
+            anomalies = context["anomalies"]
+            parts.append(f"\nAnomalies found: {len(anomalies)}")
+            for i, anomaly in enumerate(anomalies, 1):
+                atype = anomaly.get("anomaly_type", "unknown")
+                timestamp = anomaly.get("timestamp", 0)
+                severity = anomaly.get("severity", "unknown")
+                description = anomaly.get("description", "")
+                parts.append(f"{i}. {atype} at {timestamp:.1f}s (severity: {severity}) - {description}")
+        
         return "\n".join(parts)
+
     
     def reset_conversation(self):
         """Reset conversation history"""

@@ -20,8 +20,8 @@ class VideoProcessor:
     
     def process_video(self, video_path: Path) -> Dict:
         """
-        Process video and detect vehicles
-        Returns statistics about detected vehicles
+        Process video and track vehicles using YOLO tracking
+        Returns statistics, detections, and vehicle trajectories
         """
         cap = cv2.VideoCapture(str(video_path))
         
@@ -33,6 +33,7 @@ class VideoProcessor:
         duration = total_frames / fps if fps > 0 else 0
         
         detections = []
+        trajectories = {}  # track_id -> trajectory data
         frame_count = 0
         
         print(f"Processing video: {video_path.name}")
@@ -43,9 +44,10 @@ class VideoProcessor:
             if not ret:
                 break
             
-            # Run YOLO detection every 10 frames (for speed)
+            # Run YOLO tracking every 10 frames (for speed)
             if frame_count % 10 == 0:
-                results = self.model(frame, verbose=False)
+                # Use track() instead of simple detection - persist=True maintains track IDs
+                results = self.model.track(frame, persist=True, verbose=False)
                 
                 for result in results:
                     boxes = result.boxes
@@ -55,14 +57,40 @@ class VideoProcessor:
                         
                         # Only track vehicles with confidence > 0.5
                         if cls in self.vehicle_classes and conf > 0.5:
-                            detections.append({
+                            # Get track ID if available
+                            track_id = int(box.id[0]) if box.id is not None else None
+                            
+                            # Get bounding box coordinates
+                            bbox = box.xyxy[0].tolist()
+                            center_x = (bbox[0] + bbox[2]) / 2
+                            center_y = (bbox[1] + bbox[3]) / 2
+                            timestamp = frame_count / fps
+                            
+                            detection = {
                                 "frame": frame_count,
-                                "timestamp": frame_count / fps,
+                                "timestamp": timestamp,
+                                "track_id": track_id,
                                 "class_id": cls,
                                 "class_name": self.vehicle_classes[cls],
                                 "confidence": conf,
-                                "bbox": box.xyxy[0].tolist()
-                            })
+                                "bbox": bbox
+                            }
+                            detections.append(detection)
+                            
+                            # Build trajectories for tracked vehicles
+                            if track_id is not None:
+                                if track_id not in trajectories:
+                                    trajectories[track_id] = {
+                                        "track_id": track_id,
+                                        "class_name": self.vehicle_classes[cls],
+                                        "positions": [],
+                                        "timestamps": [],
+                                        "frames": []
+                                    }
+                                
+                                trajectories[track_id]["positions"].append((center_x, center_y))
+                                trajectories[track_id]["timestamps"].append(timestamp)
+                                trajectories[track_id]["frames"].append(frame_count)
             
             frame_count += 1
             
@@ -73,8 +101,8 @@ class VideoProcessor:
         
         cap.release()
         
-        # Calculate statistics
-        stats = self._calculate_statistics(detections, duration)
+        # Calculate statistics using unique track IDs
+        stats = self._calculate_statistics(detections, trajectories, duration)
         
         return {
             "video_info": {
@@ -84,30 +112,37 @@ class VideoProcessor:
                 "total_frames": total_frames
             },
             "detections": detections,
+            "trajectories": trajectories,
             "statistics": stats
         }
     
-    def _calculate_statistics(self, detections: List[Dict], duration: float) -> Dict:
-        """Calculate statistics from detections"""
+    def _calculate_statistics(self, detections: List[Dict], trajectories: Dict, duration: float) -> Dict:
+        """Calculate statistics from detections and trajectories"""
         if not detections:
             return {
                 "total_vehicles": 0,
                 "vehicles_per_hour": 0,
-                "vehicle_types": {}
+                "vehicle_types": {},
+                "segments": [0] * 10
             }
         
-        # Count unique vehicles (simplified - count detections / 10)
-        # In a real system, you'd use tracking to count unique vehicles
-        estimated_vehicles = len(detections) // 10
+        # Count unique vehicles based on track IDs
+        unique_track_ids = set()
+        for det in detections:
+            if det.get("track_id") is not None:
+                unique_track_ids.add(det["track_id"])
+        
+        # Use unique track IDs count if available, otherwise fallback to old method
+        total_vehicles = len(unique_track_ids) if unique_track_ids else len(detections) // 10
         
         # Vehicles per hour
         hours = duration / 3600 if duration > 0 else 1
-        vehicles_per_hour = estimated_vehicles / hours
+        vehicles_per_hour = total_vehicles / hours
         
-        # Count by type
+        # Count by type (count unique track_ids per type)
         vehicle_types = {}
-        for det in detections:
-            vtype = det["class_name"]
+        for track_id, traj in trajectories.items():
+            vtype = traj["class_name"]
             vehicle_types[vtype] = vehicle_types.get(vtype, 0) + 1
         
         # Find busiest segment (divide video into 10 segments)
@@ -116,12 +151,13 @@ class VideoProcessor:
             segment_idx = min(int((det["timestamp"] / duration) * 10), 9) if duration > 0 else 0
             segments[segment_idx] += 1
         
-        busiest_segment = segments.index(max(segments))
+        busiest_segment = segments.index(max(segments)) if max(segments) > 0 else 0
         
         return {
-            "total_vehicles": estimated_vehicles,
+            "total_vehicles": total_vehicles,
             "vehicles_per_hour": round(vehicles_per_hour, 2),
             "vehicle_types": vehicle_types,
+            "segments": segments,
             "busiest_segment": {
                 "segment_number": busiest_segment,
                 "start_time": (busiest_segment * duration / 10) if duration > 0 else 0,

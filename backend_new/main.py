@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Optional
 from video_processor import VideoProcessor
 from database import Database
+from anomaly_detector import AnomalyDetector
 
 app = FastAPI(title="Natural Anomaly Detection API")
 
@@ -26,9 +27,10 @@ PROCESSED_DIR = Path("processed")
 UPLOAD_DIR.mkdir(exist_ok=True)
 PROCESSED_DIR.mkdir(exist_ok=True)
 
-# Initialize video processor, database, and AI assistant
+# Initialize video processor, database, anomaly detector, and AI assistant
 video_processor = VideoProcessor()
 db = Database()
+anomaly_detector = AnomalyDetector()
 
 # Import and initialize AI assistant
 from ai_assistant import AIAssistant
@@ -39,14 +41,42 @@ class ChatRequest(BaseModel):
     video_filename: Optional[str] = None
 
 def process_video_background(file_path: Path, filename: str):
-    """Background task to process video"""
+    """Background task to process video and detect anomalies"""
     try:
         print(f"Starting to process video: {filename}")
         result = video_processor.process_video(file_path)
+        
+        # Detect anomalies
+        trajectories = result.get("trajectories", {})
+        segments = result.get("statistics", {}).get("segments", [])
+        duration = result.get("video_info", {}).get("duration", 0)
+        
+        print(f"Analyzing anomalies for {filename}...")
+        anomalies = anomaly_detector.analyze_all(trajectories, segments, duration)
+        print(f"Found {len(anomalies)} anomalies")
+        
+        # Convert anomalies to dictionaries for database storage
+        anomaly_dicts = [
+            {
+                "timestamp": a.timestamp,
+                "anomaly_type": a.anomaly_type,
+                "severity": a.severity,
+                "description": a.description,
+                "track_id": a.track_id,
+                "metadata": a.metadata
+            }
+            for a in anomalies
+        ]
+        
+        # Save analysis and anomalies to database
         db.save_analysis(result)
+        db.save_anomalies(filename, anomaly_dicts)
+        
         print(f"Finished processing video: {filename}")
     except Exception as e:
         print(f"Error processing video {filename}: {str(e)}")
+        import traceback
+        traceback.print_exc()
 
 @app.get("/")
 async def root():
@@ -143,6 +173,20 @@ async def chat(request: ChatRequest):
                     "busiest_segment": busiest_segment,
                     "duration": analysis.duration
                 }
+                
+                # Get anomalies for this video
+                anomalies = db.get_anomalies(request.video_filename)
+                if anomalies:
+                    context["anomalies"] = [
+                        {
+                            "timestamp": a.timestamp,
+                            "anomaly_type": a.anomaly_type,
+                            "severity": a.severity,
+                            "description": a.description,
+                            "track_id": a.track_id
+                        }
+                        for a in anomalies
+                    ]
         
         # Use AI assistant to generate response
         response = ai_assistant.ask(request.message, context, request.video_filename)
@@ -165,6 +209,28 @@ async def reset_chat():
         return JSONResponse(content={"message": "Conversation reset successfully"})
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error resetting chat: {str(e)}")
+
+@app.get("/api/anomalies/{filename}")
+async def get_anomalies(filename: str):
+    """Get all detected anomalies for a specific video"""
+    try:
+        anomalies = db.get_anomalies(filename)
+        return JSONResponse(content={
+            "anomalies": [
+                {
+                    "id": a.id,
+                    "timestamp": a.timestamp,
+                    "anomaly_type": a.anomaly_type,
+                    "severity": a.severity,
+                    "description": a.description,
+                    "track_id": a.track_id,
+                    "metadata": a.anomaly_metadata
+                }
+                for a in anomalies
+            ]
+        })
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error getting anomalies: {str(e)}")
 
 @app.get("/api/health/")
 async def health_check():
